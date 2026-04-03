@@ -202,7 +202,7 @@ npx tsx examples/01-single-agent.ts
 
 ## Star 趋势
 
-[![Star History Chart](https://api.star-history.com/svg?repos=JackChen-me/open-multi-agent&type=Date&v=20260402b)](https://star-history.com/#JackChen-me/open-multi-agent&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=JackChen-me/open-multi-agent&type=Date&v=20260403)](https://star-history.com/#JackChen-me/open-multi-agent&Date)
 
 ## 许可证
 
