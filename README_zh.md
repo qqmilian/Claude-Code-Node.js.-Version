@@ -137,14 +137,15 @@ Tokens: 12847 output tokens
 
 ## 示例
 
-[`examples/`](./examples/) 里有 15 个可运行脚本。推荐从这 4 个开始：
+[`examples/`](./examples/) 里有 16 个可运行脚本和 1 个完整项目。推荐从这几个开始：
 
 - [02 — 团队协作](examples/02-team-collaboration.ts)：`runTeam()` 协调者模式。
 - [06 — 本地模型](examples/06-local-model.ts)：通过 `baseURL` 把 Ollama 和 Claude 放在同一条管线。
 - [09 — 结构化输出](examples/09-structured-output.ts)：任意 agent 产出 Zod 校验过的 JSON。
 - [11 — 可观测性](examples/11-trace-observability.ts)：`onTrace` 回调，为 LLM 调用、工具、任务发出结构化 span。
+- [with-vercel-ai-sdk](examples/with-vercel-ai-sdk/)：Next.js 应用 — OMA `runTeam()` + AI SDK `useChat` 流式输出。
 
-用 `npx tsx examples/02-team-collaboration.ts` 运行任意一个。
+用 `npx tsx examples/02-team-collaboration.ts` 运行脚本示例。
 
 ## 架构
 

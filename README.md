@@ -139,14 +139,15 @@ For MapReduce-style fan-out without task dependencies, use `AgentPool.runParalle
 
 ## Examples
 
-16 runnable scripts in [`examples/`](./examples/). Start with these four:
+16 runnable scripts and 1 full-stack demo in [`examples/`](./examples/). Start with these:
 
 - [02 — Team Collaboration](examples/02-team-collaboration.ts): `runTeam()` coordinator pattern.
 - [06 — Local Model](examples/06-local-model.ts): Ollama and Claude in one pipeline via `baseURL`.
 - [09 — Structured Output](examples/09-structured-output.ts): any agent returns Zod-validated JSON.
 - [11 — Trace Observability](examples/11-trace-observability.ts): `onTrace` spans for LLM calls, tools, and tasks.
+- [with-vercel-ai-sdk](examples/with-vercel-ai-sdk/): Next.js app — OMA `runTeam()` + AI SDK `useChat` streaming.
 
-Run any with `npx tsx examples/02-team-collaboration.ts`.
+Run scripts with `npx tsx examples/02-team-collaboration.ts`.
 
 ## Architecture
 
