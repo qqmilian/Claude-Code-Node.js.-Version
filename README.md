@@ -53,7 +53,6 @@ See [`DECISIONS.md`](./DECISIONS.md) for the full rationale.
 `open-multi-agent` is a new project (launched 2026-04-01, MIT, 5,500+ stars). The ecosystem is still forming, so the list below is short and honest:
 
 - **[temodar-agent](https://github.com/xeloxa/temodar-agent)** (~50 stars). WordPress security analysis platform by [Ali Sünbül](https://github.com/xeloxa). Uses our built-in tools (`bash`, `file_*`, `grep`) directly in its Docker runtime. Confirmed production use.
-- **[rentech-quant-platform](https://github.com/rookiecoderasz/rentech-quant-platform).** Multi-agent quant trading research platform. Five pipelines plus MCP integrations, built on top of `open-multi-agent`. Early signal, very new.
 - **Cybersecurity SOC (home lab).** A private setup running Qwen 2.5 + DeepSeek Coder entirely offline via Ollama, building an autonomous SOC pipeline on Wazuh + Proxmox. Early user, not yet public.
 
 Using `open-multi-agent` in production or a side project? [Open a discussion](https://github.com/JackChen-me/open-multi-agent/discussions) and we will list it here.
@@ -142,14 +141,16 @@ For MapReduce-style fan-out without task dependencies, use `AgentPool.runParalle
 
 ## Examples
 
-18 runnable scripts and 1 full-stack demo in [`examples/`](./examples/). Start with these:
+19 runnable scripts and 1 full-stack demo in [`examples/`](./examples/). Start with these:
 
 - [02 — Team Collaboration](examples/02-team-collaboration.ts): `runTeam()` coordinator pattern.
 - [06 — Local Model](examples/06-local-model.ts): Ollama and Claude in one pipeline via `baseURL`.
 - [09 — Structured Output](examples/09-structured-output.ts): any agent returns Zod-validated JSON.
 - [11 — Trace Observability](examples/11-trace-observability.ts): `onTrace` spans for LLM calls, tools, and tasks.
+- [16 — MCP (GitHub)](examples/16-mcp-github.ts): expose an MCP server's tools to an agent via `connectMCPTools()`.
 - [17 — MiniMax](examples/17-minimax.ts): three-agent team using MiniMax M2.7.
 - [18 — DeepSeek](examples/18-deepseek.ts): three-agent team using DeepSeek Chat.
+- [19 — Groq](examples/19-groq.ts): OpenAI-compatible Groq endpoint with fast free-tier models.
 - [with-vercel-ai-sdk](examples/with-vercel-ai-sdk/): Next.js app — OMA `runTeam()` + AI SDK `useChat` streaming.
 
 Run scripts with `npx tsx examples/02-team-collaboration.ts`.
@@ -256,7 +257,58 @@ const customAgent: AgentConfig = {
 
 ### Custom Tools
 
-Tools added via `agent.addTool()` are always available regardless of filtering.
+Two ways to give an agent a tool that is not in the built-in set.
+
+**Inject at config time** via `customTools` on `AgentConfig`. Good when the orchestrator wires up tools centrally. Tools defined here bypass preset/allowlist filtering but still respect `disallowedTools`.
+
+```typescript
+import { defineTool } from '@jackchen_me/open-multi-agent'
+import { z } from 'zod'
+
+const weatherTool = defineTool({
+  name: 'get_weather',
+  description: 'Look up current weather for a city.',
+  schema: z.object({ city: z.string() }),
+  execute: async ({ city }) => ({ content: await fetchWeather(city) }),
+})
+
+const agent: AgentConfig = {
+  name: 'assistant',
+  model: 'claude-sonnet-4-6',
+  customTools: [weatherTool],
+}
+```
+
+**Register at runtime** via `agent.addTool(tool)`. Tools added this way are always available, regardless of filtering.
+
+### Tool Output Control
+
+Long tool outputs can blow up conversation size and cost. Two controls work together.
+
+**Truncation** — cap an individual tool result to a head + tail excerpt with a marker in between:
+
+```typescript
+const agent: AgentConfig = {
+  // ...
+  maxToolOutputChars: 10_000, // applies to every tool this agent runs
+}
+
+// Per-tool override (takes priority over AgentConfig.maxToolOutputChars):
+const bigQueryTool = defineTool({
+  // ...
+  maxOutputChars: 50_000,
+})
+```
+
+**Post-consumption compression** — once the agent has acted on a tool result, compress older copies in the transcript so they stop costing input tokens on every subsequent turn. Error results are never compressed.
+
+```typescript
+const agent: AgentConfig = {
+  // ...
+  compressToolResults: true,                 // default threshold: 500 chars
+  // or: compressToolResults: { minChars: 2_000 }
+}
+```
 
 ### MCP Tools (Model Context Protocol)
 
@@ -281,6 +333,33 @@ Notes:
 - `@modelcontextprotocol/sdk` is an optional peer dependency, only needed when using MCP.
 - Current transport support is stdio.
 - MCP input validation is delegated to the MCP server (`inputSchema` is `z.any()`).
+
+See [example 16](examples/16-mcp-github.ts) for a full runnable setup.
+
+## Context Management
+
+Long-running agents can hit input token ceilings fast. Set `contextStrategy` on `AgentConfig` to control how the conversation shrinks as it grows:
+
+```typescript
+const agent: AgentConfig = {
+  name: 'long-runner',
+  model: 'claude-sonnet-4-6',
+  // Pick one:
+  contextStrategy: { type: 'sliding-window', maxTurns: 20 },
+  // contextStrategy: { type: 'summarize', maxTokens: 80_000, summaryModel: 'claude-haiku-4-5' },
+  // contextStrategy: { type: 'compact', maxTokens: 100_000, preserveRecentTurns: 4 },
+  // contextStrategy: { type: 'custom', compress: (messages, estimatedTokens, ctx) => ... },
+}
+```
+
+| Strategy | When to reach for it |
+|----------|----------------------|
+| `sliding-window` | Cheapest. Keep the last N turns, drop the rest. |
+| `summarize` | Send old turns to a summary model; keep the summary in place of the originals. |
+| `compact` | Rule-based: truncate large assistant text blocks and tool results, keep recent turns intact. No extra LLM call. |
+| `custom` | Supply your own `compress(messages, estimatedTokens, ctx)` function. |
+
+Pairs well with `compressToolResults` and `maxToolOutputChars` above.
 
 ## Supported Providers
 
