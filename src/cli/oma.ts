@@ -10,11 +10,13 @@
  *   3 — unexpected runtime error (including LLM errors)
  */
 
+import { mkdir, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { OpenMultiAgent } from '../orchestrator/orchestrator.js'
+import { renderTeamRunDashboard } from '../dashboard/render-team-run-dashboard.js'
 import type { SupportedProvider } from '../llm/adapter.js'
 import type { AgentRunResult, CoordinatorConfig, OrchestratorConfig, TeamConfig, TeamRunResult } from '../types.js'
 
@@ -224,6 +226,8 @@ export function serializeTeamRunResult(result: TeamRunResult, opts: CliJsonOptio
   }
   return {
     success: result.success,
+    goal: result.goal,
+    tasks: result.tasks,
     totalTokenUsage: result.totalTokenUsage,
     agentResults,
   }
@@ -246,6 +250,7 @@ function help(): string {
     'Flags:',
     '  --pretty              Pretty-print JSON to stdout',
     '  --include-messages    Include full LLM message arrays in run output (large)',
+    '  --dashboard           Write team-run DAG HTML dashboard to oma-dashboards/',
     '',
     'team.json may be a TeamConfig object, or { "team": TeamConfig, "orchestrator": { ... } }.',
     'tasks.json: { "team": TeamConfig, "tasks": [ ... ], "orchestrator"?: { ... } }.',
@@ -316,11 +321,21 @@ function mergeOrchestrator(base: OrchestratorConfig, ...partials: OrchestratorCo
   return o
 }
 
+async function writeRunTeamDashboardFile(html: string): Promise<string> {
+  const directory = join(process.cwd(), 'oma-dashboards')
+  await mkdir(directory, { recursive: true })
+  const stamp = new Date().toISOString().replaceAll(':', '-').replace('.', '-')
+  const filePath = join(directory, `runTeam-${stamp}.html`)
+  await writeFile(filePath, html, 'utf8')
+  return filePath
+}
+
 async function main(): Promise<number> {
   const argv = parseArgs(process.argv)
   const cmd = argv._[0]
   const pretty = argv.flags.has('pretty')
   const includeMessages = argv.flags.has('include-messages')
+  const dashboard = argv.flags.has('dashboard')
 
   if (cmd === undefined || cmd === 'help' || cmd === '-h' || cmd === '--help') {
     process.stdout.write(`${help()}\n`)
@@ -366,6 +381,16 @@ async function main(): Promise<number> {
         coordinator = asCoordinatorPartial(readJson(coordPath), 'coordinator file')
       }
       const result = await orchestrator.runTeam(team, goal, coordinator ? { coordinator } : undefined)
+      if (dashboard) {
+        const html = renderTeamRunDashboard(result)
+        try {
+          await writeRunTeamDashboardFile(html)
+        } catch (err) {
+          process.stderr.write(
+            `oma: failed to write runTeam dashboard: ${err instanceof Error ? err.message : String(err)}\n`,
+          )
+        }
+      }
       await orchestrator.shutdown()
       const payload = { command: 'run' as const, ...serializeTeamRunResult(result, jsonOpts) }
       printJson(payload, pretty)

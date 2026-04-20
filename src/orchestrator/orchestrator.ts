@@ -48,6 +48,8 @@ import type {
   OrchestratorConfig,
   OrchestratorEvent,
   Task,
+  TaskExecutionMetrics,
+  TaskExecutionRecord,
   TaskStatus,
   TeamConfig,
   TeamInfo,
@@ -414,6 +416,7 @@ interface RunContext {
   readonly maxTokenBudget?: number
   budgetExceededTriggered: boolean
   budgetExceededReason?: string
+  readonly taskMetrics: Map<string, TaskExecutionMetrics>
 }
 
 /**
@@ -616,7 +619,7 @@ async function executeQueue(
         team: buildTaskAgentTeamInfo(ctx, task.id, traceBase, 0, [assignee]),
       }
 
-      const taskStartMs = config.onTrace ? Date.now() : 0
+      const taskStartMs = Date.now()
       let retryCount = 0
 
       const result = await executeWithRetry(
@@ -633,9 +636,10 @@ async function executeQueue(
         },
       )
 
+      const taskEndMs = Date.now()
+
       // Emit task trace
       if (config.onTrace) {
-        const taskEndMs = Date.now()
         emitTrace(config.onTrace, {
           type: 'task',
           runId: ctx.runId ?? '',
@@ -651,6 +655,14 @@ async function executeQueue(
       }
 
       ctx.agentResults.set(`${assignee}:${task.id}`, result)
+
+      ctx.taskMetrics.set(task.id, {
+        startMs: taskStartMs,
+        endMs: taskEndMs,
+        durationMs: Math.max(0, taskEndMs - taskStartMs),
+        tokenUsage: result.tokenUsage,
+        toolCalls: result.toolCalls,
+      })
       ctx.cumulativeUsage = addUsage(ctx.cumulativeUsage, result.tokenUsage)
       const totalTokens = ctx.cumulativeUsage.input_tokens + ctx.cumulativeUsage.output_tokens
       if (
@@ -1008,7 +1020,9 @@ export class OpenMultiAgent {
           ? { ...(traceFields ?? {}), ...(abortFields ?? {}) }
           : undefined
 
+      const scStartMs = Date.now()
       const result = await agent.run(goal, runOptions)
+      const scEndMs = Date.now()
 
       if (result.budgetExceeded) {
         this.config.onProgress?.({
@@ -1030,7 +1044,23 @@ export class OpenMultiAgent {
 
       const agentResults = new Map<string, AgentRunResult>()
       agentResults.set(bestAgent.name, result)
-      return this.buildTeamRunResult(agentResults)
+
+
+      const tasks: readonly TaskExecutionRecord[] = [{
+        id: 'short-circuit',
+        title: `Short-circuit: ${bestAgent.name}`,
+        assignee: bestAgent.name,
+        status: result.success ? 'completed' : 'failed',
+        dependsOn: [],
+        metrics: {
+          startMs: scStartMs,
+          endMs: scEndMs,
+          durationMs: Math.max(0, scEndMs - scStartMs),
+          tokenUsage: result.tokenUsage,
+          toolCalls: result.toolCalls,
+        },
+      }]
+      return this.buildTeamRunResult(agentResults, goal, tasks)
     }
 
     // ------------------------------------------------------------------
@@ -1085,7 +1115,7 @@ export class OpenMultiAgent {
           maxTokenBudget,
         ),
       })
-      return this.buildTeamRunResult(agentResults)
+      return this.buildTeamRunResult(agentResults, goal, [])
     }
 
     // ------------------------------------------------------------------
@@ -1095,6 +1125,7 @@ export class OpenMultiAgent {
 
     const queue = new TaskQueue()
     const scheduler = new Scheduler('dependency-first')
+    const taskMetrics = new Map<string, TaskExecutionMetrics>()
 
     if (taskSpecs && taskSpecs.length > 0) {
       // Map title-based dependsOn references to real task IDs so we can
@@ -1134,10 +1165,19 @@ export class OpenMultiAgent {
       maxTokenBudget,
       budgetExceededTriggered: false,
       budgetExceededReason: undefined,
+      taskMetrics,
     }
 
     await executeQueue(queue, ctx)
     cumulativeUsage = ctx.cumulativeUsage
+    const taskRecords: readonly TaskExecutionRecord[] = queue.list().map((task) => ({
+      id: task.id,
+      title: task.title,
+      assignee: task.assignee,
+      status: task.status,
+      dependsOn: task.dependsOn ?? [],
+      metrics: taskMetrics.get(task.id),
+    }))
 
     // ------------------------------------------------------------------
     // Step 5: Coordinator synthesises final result
@@ -1146,7 +1186,7 @@ export class OpenMultiAgent {
       maxTokenBudget !== undefined
       && cumulativeUsage.input_tokens + cumulativeUsage.output_tokens > maxTokenBudget
     ) {
-      return this.buildTeamRunResult(agentResults)
+      return this.buildTeamRunResult(agentResults, goal, taskRecords)
     }
     const synthesisPrompt = await this.buildSynthesisPrompt(goal, queue.list(), team)
     const synthTraceOptions: Partial<RunOptions> | undefined = this.config.onTrace
@@ -1180,7 +1220,7 @@ export class OpenMultiAgent {
     // Only actual user tasks (non-coordinator keys) are counted in
     // buildTeamRunResult, so we do not increment completedTaskCount here.
 
-    return this.buildTeamRunResult(agentResults)
+    return this.buildTeamRunResult(agentResults, goal, taskRecords)
   }
 
   // -------------------------------------------------------------------------
@@ -1246,11 +1286,21 @@ export class OpenMultiAgent {
       maxTokenBudget: this.config.maxTokenBudget,
       budgetExceededTriggered: false,
       budgetExceededReason: undefined,
+      taskMetrics: new Map<string, TaskExecutionMetrics>(),
     }
 
     await executeQueue(queue, ctx)
 
-    return this.buildTeamRunResult(agentResults)
+    const taskRecords: readonly TaskExecutionRecord[] = queue.list().map((task) => ({
+      id: task.id,
+      title: task.title,
+      assignee: task.assignee,
+      status: task.status,
+      dependsOn: task.dependsOn ?? [],
+      metrics: ctx.taskMetrics.get(task.id),
+    }))
+
+    return this.buildTeamRunResult(agentResults, undefined, taskRecords)
   }
 
   // -------------------------------------------------------------------------
@@ -1529,6 +1579,8 @@ export class OpenMultiAgent {
    */
   private buildTeamRunResult(
     agentResults: Map<string, AgentRunResult>,
+    goal?: string,
+    tasks?: readonly TaskExecutionRecord[],
   ): TeamRunResult {
     let totalUsage: TokenUsage = ZERO_USAGE
     let overallSuccess = true
@@ -1566,6 +1618,8 @@ export class OpenMultiAgent {
 
     return {
       success: overallSuccess,
+      goal,
+      tasks,
       agentResults: collapsed,
       totalTokenUsage: totalUsage,
     }

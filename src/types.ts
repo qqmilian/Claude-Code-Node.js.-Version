@@ -441,6 +441,8 @@ export interface TeamConfig {
 /** Aggregated result for a full team run. */
 export interface TeamRunResult {
   readonly success: boolean
+  readonly goal?: string
+  readonly tasks?: readonly TaskExecutionRecord[]
   /** Keyed by agent name. */
   readonly agentResults: Map<string, AgentRunResult>
   readonly totalTokenUsage: TokenUsage
@@ -452,6 +454,28 @@ export interface TeamRunResult {
 
 /** Valid states for a {@link Task}. */
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked' | 'skipped'
+
+/**
+ * Metrics shown in the team-run dashboard detail panel for a single task.
+ * Mirrors execution data collected during orchestration.
+ */
+export interface TaskExecutionMetrics {
+  readonly startMs: number
+  readonly endMs: number
+  readonly durationMs: number
+  readonly tokenUsage: TokenUsage
+  readonly toolCalls: AgentRunResult['toolCalls']
+}
+
+/** Serializable task snapshot embedded in the static HTML dashboard. */
+export interface TaskExecutionRecord {
+  readonly id: string
+  readonly title: string
+  readonly assignee?: string
+  readonly status: TaskStatus
+  readonly dependsOn: readonly string[]
+  readonly metrics?: TaskExecutionMetrics
+}
 
 /** A discrete unit of work tracked by the orchestrator. */
 export interface Task {
